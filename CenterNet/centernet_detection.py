@@ -1,43 +1,50 @@
 import os
 from argparse import ArgumentParser
-import numpy as np
+from datetime import datetime, timedelta
+
+import dotenv
 import imgaug as ia
 import imgaug.augmenters as iaa
-import torch
-import torchvision
-import torch.nn.functional as F
-import torchvision.transforms.functional as VF
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from torch.utils.data import DataLoader
+import numpy as np
 import pytorch_lightning as pl
+import torch
+import torch.nn.functional as F
+import torchvision
+import torchvision.transforms.functional as VF
 from pycocotools.cocoeval import COCOeval
-from torchvision.datasets import CocoDetection
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.loggers.wandb import WandbLogger
+from torch.utils.data import DataLoader
 
 from CenterNet import CenterNet
+from CenterNet.dataset import CustomKittiDataset
+from CenterNet.decode.ctdet import ctdet_decode
 from CenterNet.models.heads import CenterHead
 from CenterNet.transforms import CategoryIdToClass, ImageAugmentation
-from CenterNet.transforms.sample import ComposeSample
 from CenterNet.transforms.ctdet import CenterDetectionSample
-from CenterNet.decode.ctdet import ctdet_decode
-from CenterNet.utils.losses import RegL1Loss, FocalLoss
+from CenterNet.transforms.sample import ComposeSample
 from CenterNet.utils.decode import sigmoid_clamped
+from CenterNet.utils.losses import FocalLoss, RegL1Loss
 from CenterNet.utils.nms import soft_nms
+
+dotenv.load_dotenv(override=True)
 
 
 class CenterNetDetection(CenterNet):
     mean = [0.408, 0.447, 0.470]
     std = [0.289, 0.274, 0.278]
     max_objs = 128
-    valid_ids = [
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13,
-        14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-        24, 25, 27, 28, 31, 32, 33, 34, 35, 36,
-        37, 38, 39, 40, 41, 42, 43, 44, 46, 47,
-        48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
-        58, 59, 60, 61, 62, 63, 64, 65, 67, 70,
-        72, 73, 74, 75, 76, 77, 78, 79, 80, 81,
-        82, 84, 85, 86, 87, 88, 89, 90
-    ]
+    object_types = {
+        "Car": 0,
+        "Van": 1,
+        "Truck": 2,
+        "Pedestrian": 3,
+        "Person_sitting": 4,
+        "Cyclist": 5,
+        "Tram": 6,
+        "Misc": 7,
+        "DontCare": 8,
+    }
 
     def __init__(
         self,
@@ -65,9 +72,7 @@ class CenterNetDetection(CenterNet):
         )
 
         self.learning_rate_milestones = (
-            learning_rate_milestones
-            if learning_rate_milestones is not None
-            else []
+            learning_rate_milestones if learning_rate_milestones is not None else []
         )
 
         # Test
@@ -114,6 +119,7 @@ class CenterNetDetection(CenterNet):
                 target["indices"],
                 target["regression"],
             )
+            # TODO: add loss of distance
 
         loss = (
             self.hparams.hm_weight * hm_loss
@@ -168,7 +174,9 @@ class CenterNetDetection(CenterNet):
         if self.test_flip:
             for output in outputs:
                 output["heatmap"] = (output["heatmap"][0:1] + VF.hflip(output["heatmap"][1:2])) / 2
-                output["width_height"] = (output["width_height"][0:1] + VF.hflip(output["width_height"][1:2])) / 2
+                output["width_height"] = (
+                    output["width_height"][0:1] + VF.hflip(output["width_height"][1:2])
+                ) / 2
                 output["regression"] = output["regression"][0:1]
 
         return image_id, outputs, meta
@@ -207,9 +215,7 @@ class CenterNetDetection(CenterNet):
         # Merge detections
         results = {}
         for j in range(1, self.num_classes + 1):
-            results[j] = np.concatenate(
-                [detection[j] for detection in detections], axis=0
-            )
+            results[j] = np.concatenate([detection[j] for detection in detections], axis=0)
             if len(self.test_scales) > 1:
                 keep_indices = soft_nms(results[j], Nt=0.5, method=2)
                 results[j] = results[j][keep_indices]
@@ -275,7 +281,6 @@ def cli_main():
     # ------------
     parser = ArgumentParser()
     parser.add_argument("image_root")
-    parser.add_argument("annotation_root")
 
     parser.add_argument("--pretrained_weights_path")
     parser.add_argument("--batch_size", default=32, type=int)
@@ -289,30 +294,31 @@ def cli_main():
     # ------------
     train_transform = ComposeSample(
         [
+            # NOTE: Data augmentation is temporarily commented
             ImageAugmentation(
                 iaa.Sequential(
                     [
-                        iaa.Sequential(
-                            [
-                                iaa.Fliplr(0.5),
-                                iaa.Sometimes(0.5, iaa.GaussianBlur(sigma=(0, 0.5))),
-                                iaa.LinearContrast((0.75, 1.5)),
-                                iaa.AdditiveGaussianNoise(
-                                    loc=0, scale=(0.0, 0.05 * 255), per_channel=0.5
-                                ),
-                                iaa.Multiply((0.8, 1.2), per_channel=0.1),
-                                iaa.Affine(
-                                    scale={"x": (0.6, 1.4), "y": (0.6, 1.4)},
-                                    translate_percent={
-                                        "x": (-0.2, 0.2),
-                                        "y": (-0.2, 0.2),
-                                    },
-                                    rotate=(-5, 5),
-                                    shear=(-3, 3),
-                                ),
-                            ],
-                            random_order=True,
-                        ),
+                        # iaa.Sequential(
+                        #     [
+                        #         iaa.Fliplr(0.5),
+                        #         iaa.Sometimes(0.5, iaa.GaussianBlur(sigma=(0, 0.5))),
+                        #         iaa.LinearContrast((0.75, 1.5)),
+                        #         iaa.AdditiveGaussianNoise(
+                        #             loc=0, scale=(0.0, 0.05 * 255), per_channel=0.5
+                        #         ),
+                        #         iaa.Multiply((0.8, 1.2), per_channel=0.1),
+                        #         iaa.Affine(
+                        #             scale={"x": (0.6, 1.4), "y": (0.6, 1.4)},
+                        #             translate_percent={
+                        #                 "x": (-0.2, 0.2),
+                        #                 "y": (-0.2, 0.2),
+                        #             },
+                        #             rotate=(-5, 5),
+                        #             shear=(-3, 3),
+                        #         ),
+                        #     ],
+                        #     random_order=True,
+                        # ),
                         iaa.PadToFixedSize(width=512, height=512),
                         iaa.CropToFixedSize(width=512, height=512),
                     ]
@@ -326,7 +332,7 @@ def cli_main():
                     ]
                 ),
             ),
-            CategoryIdToClass(CenterNetDetection.valid_ids),
+            CategoryIdToClass(CenterNetDetection.object_types),
             CenterDetectionSample(),
         ]
     )
@@ -336,10 +342,7 @@ def cli_main():
             ImageAugmentation(
                 iaa.Sequential(
                     [
-                        iaa.Resize({
-                            "shorter-side": "keep-aspect-ratio",
-                            "longer-side": 500
-                        }),
+                        iaa.Resize({"shorter-side": "keep-aspect-ratio", "longer-side": 500}),
                         iaa.PadToFixedSize(width=512, height=512, position="center"),
                     ]
                 ),
@@ -352,54 +355,46 @@ def cli_main():
                     ]
                 ),
             ),
-            CategoryIdToClass(CenterNetDetection.valid_ids),
+            CategoryIdToClass(CenterNetDetection.object_types),
             CenterDetectionSample(),
         ]
     )
 
     test_transform = ImageAugmentation(img_transforms=torchvision.transforms.ToTensor())
 
-    coco_train = CocoDetection(
-        os.path.join(args.image_root, "train2017"),
-        os.path.join(args.annotation_root, "instances_train2017.json"),
-        transforms=train_transform,
-    )
+    kitti_train = CustomKittiDataset(args.image_root, train=True, transforms=train_transform)
 
-    coco_val = CocoDetection(
-        os.path.join(args.image_root, "val2017"),
-        os.path.join(args.annotation_root, "instances_val2017.json"),
-        transforms=valid_transform,
-    )
+    kitti_val = CustomKittiDataset(args.image_root, train=False, transforms=train_transform)
 
-    coco_test = CocoDetection(
-        os.path.join(args.image_root, "val2017"),
-        os.path.join(args.annotation_root, "instances_val2017.json"),
-        transforms=test_transform,
-    )
+    kitti_test = CustomKittiDataset(args.image_root, train=False, transforms=test_transform)
 
     train_loader = DataLoader(
-        coco_train,
+        kitti_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=True,
     )
     val_loader = DataLoader(
-        coco_val,
+        kitti_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=True,
     )
-    test_loader = DataLoader(coco_test, batch_size=1, num_workers=0, pin_memory=True)
+    test_loader = DataLoader(kitti_test, batch_size=1, num_workers=0, pin_memory=True)
 
     # ------------
     # model
     # ------------
     args.learning_rate_milestones = list(map(int, args.learning_rate_milestones.split(",")))
     model = CenterNetDetection(
-        args.arch, args.learning_rate,
+        args.arch,
+        args.learning_rate,
         args.learning_rate_milestones,
-        test_coco=coco_test.coco,
-        test_coco_ids=list(sorted(coco_test.coco.imgs.keys()))
+        # BUG: CustomDataset has no attribute coco
+        test_coco=None,
+        test_coco_ids=None
+        # test_coco=coco_test.coco,
+        # test_coco_ids=list(sorted(coco_test.coco.imgs.keys())),
     )
     if args.pretrained_weights_path:
         model.load_pretrained_weights(args.pretrained_weights_path)
@@ -411,14 +406,27 @@ def cli_main():
         ModelCheckpoint(
             monitor="val_loss",
             mode="min",
-            save_top_k=-1,
+            save_top_k=2,
             save_last=True,
-            period=10,
-            dirpath="model_weights",
+            dirpath="chkpts",
             filename=args.arch + "-detection-{epoch:02d}-{val_loss:.2f}",
         ),
-        LearningRateMonitor(logging_interval='step')
+        LearningRateMonitor(logging_interval="step"),
     ]
+    args.log_every_n_steps = 40
+
+    current_time = (datetime.now() + timedelta(hours=7)).strftime("%A %b-%d %H:%M")
+    # NOTE: Temporarily comment fit functionality
+    # args.logger = [
+    #     WandbLogger(
+    #         project="centernet",
+    #         name=current_time,
+    #         save_dir=".",
+    #         offline=False,
+    #         log_model=False,
+    #         job_type="train",
+    #     )
+    # ]
 
     trainer = pl.Trainer.from_argparse_args(args)
     trainer.fit(model, train_loader, val_loader)

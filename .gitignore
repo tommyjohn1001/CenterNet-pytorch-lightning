@@ -124,3 +124,10 @@ venv.bak/
 # seed CenterNet
 lightning_logs/
 .DS_Store
+res
+tests
+*.zip
+*.pth
+*.ckpt
+wandb
+*.json

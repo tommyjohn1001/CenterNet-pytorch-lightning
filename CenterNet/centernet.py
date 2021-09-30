@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 
-import torch
 import pytorch_lightning as pl
+import torch
 
 from CenterNet.models import create_model
 
@@ -46,17 +46,16 @@ class CenterNet(pl.LightningModule):
         heads = {
             ("0." if self.num_stacks == 1 else "")
             + ".".join(
-                [mapping[k.replace("module.", "").split(".")[0]], "fc"]
-                + k.split(".")[2:]
+                [mapping[k.replace("module.", "").split(".")[0]], "fc"] + k.split(".")[2:]
             ).replace("conv.", ""): v
             for k, v in checkpoint["state_dict"].items()
             if k.split(".")[1] in mapping
         }
         if self.arch == "hourglass":
             heads = {
-                ".".join(
-                    k.split(".")[2:3] + k.split(".")[:2] + k.split(".")[3:]
-                ).replace("fc.1", "fc.2"): v
+                ".".join(k.split(".")[2:3] + k.split(".")[:2] + k.split(".")[3:]).replace(
+                    "fc.1", "fc.2"
+                ): v
                 for k, v in heads.items()
             }
         self.heads.load_state_dict(heads, strict=strict)
@@ -99,7 +98,7 @@ class CenterNet(pl.LightningModule):
             ),
             "name": "learning_rate",
             "interval": "epoch",
-            "frequency": 1
+            "frequency": 1,
         }
 
         return [optimizer], [lr_scheduler]

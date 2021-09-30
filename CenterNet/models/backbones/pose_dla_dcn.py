@@ -1,17 +1,23 @@
-import math
 import logging
-import numpy as np
+import math
+import os
 from os.path import join
 
+import dotenv
+import numpy as np
 import torch
-from torch import nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
-
 from DCN.dcn_v2 import DCN
+from torch import nn
 
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
+
+dotenv.load_dotenv(override=True)
+if "DLA34_PRETRAINED" not in os.environ:
+    print("Err: Env var DLA34_PRETRAINED not existed. Specify it in .env file.")
+    exit(1)
 
 
 def get_model_url(data="imagenet", name="dla34", hash="ba72cf86"):
@@ -20,9 +26,7 @@ def get_model_url(data="imagenet", name="dla34", hash="ba72cf86"):
 
 def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
-    return nn.Conv2d(
-        in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
-    )
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
 class BasicBlock(nn.Module):
@@ -243,9 +247,7 @@ class Tree(nn.Module):
             self.downsample = nn.MaxPool2d(stride, stride=stride)
         if in_channels != out_channels:
             self.project = nn.Sequential(
-                nn.Conv2d(
-                    in_channels, out_channels, kernel_size=1, stride=1, bias=False
-                ),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False),
                 nn.BatchNorm2d(out_channels, momentum=BN_MOMENTUM),
             )
 
@@ -284,9 +286,7 @@ class DLA(nn.Module):
             nn.ReLU(inplace=True),
         )
         self.level0 = self._make_conv_level(channels[0], channels[0], levels[0])
-        self.level1 = self._make_conv_level(
-            channels[0], channels[1], levels[1], stride=2
-        )
+        self.level1 = self._make_conv_level(channels[0], channels[1], levels[1], stride=2)
         self.level2 = Tree(
             levels[2],
             block,
@@ -379,11 +379,14 @@ class DLA(nn.Module):
 
     def load_pretrained_model(self, data="imagenet", name="dla34", hash="ba72cf86"):
         # fc = self.fc
-        if name.endswith(".pth"):
-            model_weights = torch.load(data + name)
-        else:
-            model_url = get_model_url(data, name, hash)
-            model_weights = model_zoo.load_url(model_url)
+        # if name.endswith(".pth"):
+        #     model_weights = torch.load(data + name)
+        # else:
+        #     model_url = get_model_url(data, name, hash)
+        #     model_weights = model_zoo.load_url(model_url)
+
+        model_weights = torch.load(os.environ["DLA34_PRETRAINED"])
+
         num_classes = len(model_weights[list(model_weights.keys())[-1]])
         self.fc = nn.Conv2d(
             self.channels[-1],
@@ -398,9 +401,7 @@ class DLA(nn.Module):
 
 
 def dla34(pretrained=True, **kwargs):  # DLA-34
-    model = DLA(
-        [1, 1, 1, 2, 2, 1], [16, 32, 64, 128, 256, 512], block=BasicBlock, **kwargs
-    )
+    model = DLA([1, 1, 1, 2, 2, 1], [16, 32, 64, 128, 256, 512], block=BasicBlock, **kwargs)
     if pretrained:
         model.load_pretrained_model(data="imagenet", name="dla34", hash="ba72cf86")
     return model
@@ -435,9 +436,7 @@ def fill_up_weights(up):
 class DeformConv(nn.Module):
     def __init__(self, chi, cho):
         super(DeformConv, self).__init__()
-        self.actf = nn.Sequential(
-            nn.BatchNorm2d(cho, momentum=BN_MOMENTUM), nn.ReLU(inplace=True)
-        )
+        self.actf = nn.Sequential(nn.BatchNorm2d(cho, momentum=BN_MOMENTUM), nn.ReLU(inplace=True))
         self.conv = DCN(
             chi,
             cho,
@@ -523,9 +522,7 @@ class Interpolate(nn.Module):
         self.mode = mode
 
     def forward(self, x):
-        x = F.interpolate(
-            x, scale_factor=self.scale, mode=self.mode, align_corners=False
-        )
+        x = F.interpolate(x, scale_factor=self.scale, mode=self.mode, align_corners=False)
         return x
 
 
@@ -554,7 +551,7 @@ class DLASeg(nn.Module):
 
         self.ida_up = IDAUp(
             out_channel,
-            channels[self.first_level: self.last_level],
+            channels[self.first_level : self.last_level],
             [2 ** i for i in range(self.last_level - self.first_level)],
         )
 
