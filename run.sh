@@ -1,2 +1,2 @@
 
-python CenterNet/centernet_detection.py /Users/hoangle/Projects/VinAI/DisEstimation/res/sample_kitti --gpus=1
+python CenterNet/centernet_detection.py --gpus=1 --max_epochs=50

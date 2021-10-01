@@ -1,6 +1,6 @@
 import csv
 import os
-from typing import List
+from typing import Any, Callable, List, Optional, Tuple
 
 from PIL import Image
 from torchvision.datasets import Kitti
@@ -14,6 +14,11 @@ class CustomKittiDataset(Kitti):
     └── testing
         └── image_2
     """
+
+    def __init__(self, root: str, train: bool = True, transform: Optional[Callable] = None, target_transform: Optional[Callable] = None, transforms: Optional[Callable] = None, download: bool = False, split="training"):
+        self._location = split
+
+        super().__init__(root, train=train, transform=transform, target_transform=target_transform, transforms=transforms, download=download)
 
     @property
     def _raw_folder(self) -> str:

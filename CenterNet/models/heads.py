@@ -39,8 +39,9 @@ class CenterHead(nn.Module):
         for name in self.heads.keys():
             ret[name] = self.__getattr__(name)(x)
 
-            if name == "distance":
-                ret[name] = 1.0 / (ret[name].sigmoid() + 1e-6) - 1.0
+            # NOTE: Although this obeys the papere, I notice that disabling it results better
+            # if name == "distance":
+            #     ret[name] = 1.0 / (ret[name].sigmoid() + 1e-6) - 1.0
 
         return ret
 

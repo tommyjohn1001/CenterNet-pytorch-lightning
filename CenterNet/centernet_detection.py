@@ -31,8 +31,8 @@ dotenv.load_dotenv(override=True)
 
 
 class CenterNetDetection(CenterNet):
-    mean = [0.408, 0.447, 0.470]
-    std = [0.289, 0.274, 0.278]
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
     max_objs = 128
     object_types = {
         "Car": 0,
@@ -54,7 +54,7 @@ class CenterNetDetection(CenterNet):
         hm_weight=1,
         wh_weight=0.1,
         off_weight=1,
-        dist_weight=1,
+        dist_weight=0.1,
         num_classes=9,
         test_coco=None,
         test_coco_ids=None,
@@ -140,6 +140,7 @@ class CenterNetDetection(CenterNet):
             "hm_loss": hm_loss,
             "wh_loss": wh_loss,
             "off_loss": off_loss,
+            "dist_loss": dist_loss,
         }
         return loss, loss_stats
 
@@ -289,10 +290,12 @@ def cli_main():
     # args
     # ------------
     parser = ArgumentParser()
-    parser.add_argument("image_root")
+    if "KITTI" not in os.environ:
+        print("Err: KITTI env variable not existed.")
+        exit(1)
 
     parser.add_argument("--pretrained_weights_path")
-    parser.add_argument("--batch_size", default=32, type=int)
+    parser.add_argument("--batch_size", default=8, type=int)
     parser.add_argument("--num_workers", default=8, type=int)
     parser = pl.Trainer.add_argparse_args(parser)
     parser = CenterNetDetection.add_model_specific_args(parser)
@@ -369,13 +372,15 @@ def cli_main():
         ]
     )
 
-    test_transform = ImageAugmentation(img_transforms=torchvision.transforms.ToTensor())
+    # test_transform = ImageAugmentation(img_transforms=torchvision.transforms.ToTensor())
 
-    kitti_train = CustomKittiDataset(args.image_root, train=True, transforms=train_transform)
+    kitti_train = CustomKittiDataset(
+        os.environ["KITTI"], train=True, transforms=train_transform, split="training"
+    )
 
-    kitti_val = CustomKittiDataset(args.image_root, train=False, transforms=train_transform)
-
-    kitti_test = CustomKittiDataset(args.image_root, train=False, transforms=test_transform)
+    kitti_val = CustomKittiDataset(
+        os.environ["KITTI"], train=True, transforms=train_transform, split="validating"
+    )
 
     train_loader = DataLoader(
         kitti_train,
@@ -384,12 +389,12 @@ def cli_main():
         pin_memory=True,
     )
     val_loader = DataLoader(
-        kitti_train,
+        kitti_val,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=True,
     )
-    test_loader = DataLoader(kitti_test, batch_size=1, num_workers=0, pin_memory=True)
+    test_loader = DataLoader(kitti_val, batch_size=1, num_workers=0, pin_memory=True)
 
     # ------------
     # model
@@ -420,20 +425,20 @@ def cli_main():
         ),
         LearningRateMonitor(logging_interval="step"),
     ]
-    args.log_every_n_steps = 40
+    args.log_every_n_steps = 5
 
     current_time = (datetime.now() + timedelta(hours=7)).strftime("%A %b-%d %H:%M")
     # NOTE: Temporarily comment fit functionality
-    # args.logger = [
-    #     WandbLogger(
-    #         project="centernet",
-    #         name=current_time,
-    #         save_dir=".",
-    #         offline=False,
-    #         log_model=False,
-    #         job_type="train",
-    #     )
-    # ]
+    args.logger = [
+        WandbLogger(
+            project="centernet",
+            name=current_time,
+            save_dir=".",
+            offline=False,
+            log_model=False,
+            job_type="train",
+        )
+    ]
 
     trainer = pl.Trainer.from_argparse_args(args)
     trainer.fit(model, train_loader, val_loader)
