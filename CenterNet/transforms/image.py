@@ -38,7 +38,7 @@ class ImageAugmentation:
 
         # Write augmentation back to annotations
         for bb in bbs_aug:
-            target[bb.label]["bbox"] = [bb.x1, bb.y1, bb.x2 - bb.x1, bb.y2 - bb.y1]
+            target[bb.label]["bbox"] = [bb.x1, bb.y1, bb.x2, bb.y2]
 
         # torchvision transforms
         if self.img_transforms:

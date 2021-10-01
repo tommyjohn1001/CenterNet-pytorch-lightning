@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 
@@ -7,9 +8,7 @@ class HeadConv(nn.Module):
         self.out_channels = out_channels
 
         self.fc = nn.Sequential(
-            nn.Conv2d(
-                intermediate_channel, head_conv, kernel_size=3, padding=1, bias=True
-            ),
+            nn.Conv2d(intermediate_channel, head_conv, kernel_size=3, padding=1, bias=True),
             nn.ReLU(inplace=True),
             nn.Conv2d(head_conv, out_channels, kernel_size=1, stride=1, padding=0),
         )
@@ -39,6 +38,9 @@ class CenterHead(nn.Module):
         ret = {}
         for name in self.heads.keys():
             ret[name] = self.__getattr__(name)(x)
+
+            if name == "distance":
+                ret[name] = 1.0 / (ret[name].sigmoid() + 1e-6) - 1.0
 
         return ret
 

@@ -54,7 +54,8 @@ class CenterNetDetection(CenterNet):
         hm_weight=1,
         wh_weight=0.1,
         off_weight=1,
-        num_classes=80,
+        dist_weight=1,
+        num_classes=9,
         test_coco=None,
         test_coco_ids=None,
         test_scales=None,
@@ -63,7 +64,8 @@ class CenterNetDetection(CenterNet):
         super().__init__(arch)
 
         self.num_classes = num_classes
-        heads = {"heatmap": self.num_classes, "width_height": 2, "regression": 2}
+        # NOTE: Experiment adding distance head
+        heads = {"heatmap": self.num_classes, "width_height": 2, "regression": 2, "distance": 1}
         self.heads = torch.nn.ModuleList(
             [
                 CenterHead(heads, self.backbone.out_channels, self.head_conv)
@@ -99,7 +101,7 @@ class CenterNetDetection(CenterNet):
         return rets
 
     def loss(self, outputs, target):
-        hm_loss, wh_loss, off_loss = 0, 0, 0
+        hm_loss, wh_loss, off_loss, dist_loss = 0, 0, 0, 0
         num_stacks = len(outputs)
 
         for s in range(num_stacks):
@@ -119,12 +121,19 @@ class CenterNetDetection(CenterNet):
                 target["indices"],
                 target["regression"],
             )
+            dist_loss += self.criterion_regression(
+                output["distance"],
+                target["regression_mask"],
+                target["indices"],
+                target["distance"],
+            )
             # TODO: add loss of distance
 
         loss = (
             self.hparams.hm_weight * hm_loss
             + self.hparams.wh_weight * wh_loss
             + self.hparams.off_weight * off_loss
+            + self.hparams.dist_weight * dist_loss
         ) / num_stacks
         loss_stats = {
             "loss": loss,
@@ -356,7 +365,7 @@ def cli_main():
                 ),
             ),
             CategoryIdToClass(CenterNetDetection.object_types),
-            CenterDetectionSample(),
+            CenterDetectionSample(num_classes=9),
         ]
     )
 
@@ -390,9 +399,7 @@ def cli_main():
         args.arch,
         args.learning_rate,
         args.learning_rate_milestones,
-        # BUG: CustomDataset has no attribute coco
-        test_coco=None,
-        test_coco_ids=None
+        num_classes=9
         # test_coco=coco_test.coco,
         # test_coco_ids=list(sorted(coco_test.coco.imgs.keys())),
     )

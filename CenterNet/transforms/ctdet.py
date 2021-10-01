@@ -7,12 +7,10 @@ from ..utils.gaussian import draw_msra_gaussian, draw_umich_gaussian, gaussian_r
 
 
 class CenterDetectionSample:
-    # TODO: Figure out how samples for training and testing are created
     def __init__(
         self,
         down_ratio=4,
-        # TODO: Fix no. categories of KITTI to 7, not 80
-        num_classes=80,
+        num_classes=9,
         max_objects=128,
         gaussian_type="umich",
     ):
@@ -25,7 +23,7 @@ class CenterDetectionSample:
 
     @staticmethod
     def _coco_box_to_bbox(box):
-        return np.array([box[0], box[1], box[0] + box[2], box[1] + box[3]], dtype=np.float32)
+        return np.array([box[0], box[1], box[2], box[3]], dtype=np.float32)
 
     def scale_point(self, point, output_size):
         x, y = point / self.down_ratio
@@ -47,15 +45,15 @@ class CenterDetectionSample:
         regression = torch.zeros((self.max_objects, 2), dtype=torch.float32)
         regression_mask = torch.zeros(self.max_objects, dtype=torch.bool)
         indices = torch.zeros(self.max_objects, dtype=torch.int64)
+        distance = torch.zeros(self.max_objects, 1, dtype=torch.float32)
 
         draw_gaussian = draw_msra_gaussian if self.gaussian_type == "msra" else draw_umich_gaussian
 
         num_objects = min(len(target), self.max_objects)
         for k in range(num_objects):
             ann = target[k]
-            # NOTE: Consider discard converting bbox coordinate and class_id, use directly values of anno
-            bbox = self._coco_box_to_bbox(ann["bbox"])
-            cls_id = ann["class_id"] if "class_id" in ann else int(ann["category_id"]) - 1
+            bbox = np.array(ann["bbox"], dtype=np.float32)
+            cls_id = ann["class_id"]
 
             # Scale to output size
             bbox[:2] = self.scale_point(bbox[:2], (output_h, output_w))
@@ -69,10 +67,12 @@ class CenterDetectionSample:
                 ct_int = ct.to(torch.int32)
 
                 draw_gaussian(heatmap[cls_id], ct_int, radius)
+
                 width_height[k] = torch.tensor([1.0 * w, 1.0 * h])
                 indices[k] = ct_int[1] * output_w + ct_int[0]
                 regression[k] = ct - ct_int
                 regression_mask[k] = 1
+                distance[k] = ann["location"][2]
 
         ret = {
             "heatmap": heatmap,
@@ -80,7 +80,7 @@ class CenterDetectionSample:
             "indices": indices,
             "width_height": width_height,
             "regression": regression,
-            # TODO: Create 1 more field containing the distance
+            "distance": distance,
         }
 
         return img, ret
